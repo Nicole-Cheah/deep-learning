@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, roc_curve, accuracy_score
+from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, roc_curve, accuracy_score, f1_score, average_precision_score, precision_recall_curve
 import numpy as np
 
 # =====================
@@ -12,7 +12,7 @@ import numpy as np
 # =====================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 16
-MODEL_PATH = "bestbaseline_cnn_model.pth"
+MODEL_PATH = "bestbasellinecnn.pth"
 DATA_DIR = "data"
 
 print(f"Using device: {DEVICE}")
@@ -100,6 +100,8 @@ class CustomCNN(nn.Module):
 val_transform = transforms.Compose([
     transforms.Resize((256, 256)),
     transforms.ToTensor(),
+     transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                         std=[0.5, 0.5, 0.5]),
 ])
 
 test_dataset = datasets.ImageFolder(os.path.join(DATA_DIR, "test"), transform=val_transform)
@@ -153,15 +155,19 @@ raw_outputs, probs, preds, labels, images = evaluate_model(model, test_loader, D
 # =====================
 # METRICS COMPUTATION
 # =====================
-accuracy = accuracy_score(labels, preds)
+overall_accuracy = accuracy_score(labels, preds)
 conf_matrix = confusion_matrix(labels, preds)
 roc_auc = roc_auc_score(labels, probs.flatten())
+f1 = f1_score(labels, preds)
+avg_precision = average_precision_score(labels, probs.flatten())
 
 print("\n" + "="*50)
-print("EVALUATION RESULTS (Model Epoch 5)")
+print("evaluation results with data augmentation:")
 print("="*50)
 
-print(f"\nAccuracy: {accuracy:.4f}")
+print(f"\nOverall Accuracy: {overall_accuracy:.4f}")
+print(f"F1-Score: {f1:.4f}")
+print(f"Average Precision: {avg_precision:.4f}")
 print(f"ROC AUC Score: {roc_auc:.4f}")
 
 print("\nConfusion Matrix:")
@@ -182,6 +188,8 @@ print("\nDetailed Metrics:")
 print(f"Sensitivity (TPR): {sensitivity:.4f}")
 print(f"Specificity (TNR): {specificity:.4f}")
 print(f"Precision (PPV): {precision:.4f}")
+print(f"F1-Score: {f1:.4f}")
+print(f"Average Precision: {avg_precision:.4f}")
 
 
 # =====================
@@ -191,7 +199,7 @@ print(f"Precision (PPV): {precision:.4f}")
 plt.figure(figsize=(8, 6))
 plt.imshow(conf_matrix, cmap='Blues', aspect='auto')
 plt.colorbar()
-plt.title('Confusion Matrix - Model Epoch 5')
+plt.title('Confusion Matrix - data augmentation')
 plt.ylabel('True Label')
 plt.xlabel('Predicted Label')
 plt.xticks([0, 1])
@@ -218,7 +226,7 @@ plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {roc_auc:.4f})', linewidth=2)
 plt.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1)
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
-plt.title('ROC Curve - Model Epoch 5')
+plt.title('ROC Curve ')
 plt.legend(loc='lower right')
 plt.grid(alpha=0.3)
 plt.tight_layout()
@@ -234,7 +242,7 @@ plt.hist(probs[labels == 1], bins=30, alpha=0.6, label='Class 1 (Positive)', col
 plt.axvline(x=0.5, color='green', linestyle='--', linewidth=2, label='Decision Threshold')
 plt.xlabel('Predicted Probability')
 plt.ylabel('Frequency')
-plt.title('Distribution of Predicted Probabilities - Model Epoch 5')
+plt.title('Distribution of Predicted Probabilities')
 plt.legend()
 plt.grid(alpha=0.3)
 plt.tight_layout()
@@ -316,7 +324,7 @@ plt.plot(thresholds_to_test, precisions, marker='s', label='Precision')
 plt.plot(thresholds_to_test, recalls, marker='^', label='Recall')
 plt.xlabel('Decision Threshold')
 plt.ylabel('Score')
-plt.title('Metrics vs Decision Threshold - Model Epoch 5')
+plt.title('Metrics vs Decision Threshold')
 plt.legend()
 plt.grid(alpha=0.3)
 plt.axvline(x=0.5, color='red', linestyle='--', alpha=0.5, label='Default Threshold')
@@ -325,13 +333,76 @@ plt.savefig('threshold_analysis.png', dpi=150, bbox_inches='tight')
 print("✓ Threshold analysis saved as 'threshold_analysis.png'")
 plt.show()
 
+precision_pts, recall_pts, _ = precision_recall_curve(labels, probs.flatten())
 
+plt.figure(figsize=(8, 6))
+plt.plot(recall_pts, precision_pts, label=f'PR Curve (AP = {avg_precision:.4f})', color='purple', linewidth=2)
+plt.xlabel('Recall (Sensitivity)')
+plt.ylabel('Precision (PPV)')
+plt.title('Precision-Recall Curve')
+plt.legend(loc='lower left')
+plt.grid(alpha=0.3)
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.tight_layout()
+plt.savefig('precision_recall_curve.png', dpi=150, bbox_inches='tight')
+print("✓ Precision-Recall curve saved as 'precision_recall_curve.png'")
+plt.show()
+
+
+true_positives_mask = (preds == 1) & (labels == 1)
+true_positive_images = images[true_positives_mask]
+true_positive_probs = probs[true_positives_mask]
+
+if len(true_positive_images) > 0:
+    num_to_show = min(12, len(true_positive_images))
+    plt.figure(figsize=(16, 4))
+    for i in range(num_to_show):
+        plt.subplot(3, 4, i + 1)
+        img = true_positive_images[i].transpose(1, 2, 0)
+        img = np.clip(img, 0, 1)
+        plt.imshow(img)
+        plt.title(f"TP: Prob={true_positive_probs[i]:.3f}")
+        plt.axis('off')
+
+    plt.suptitle(f'True Positives (N={len(true_positive_images)}): Correctly Predicted Class 1',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('true_positives.png', dpi=150, bbox_inches='tight')
+    print(f"✓ True positives saved as 'true_positives.png' ({len(true_positive_images)} total)")
+    plt.show()
+else:
+    print("✗ No true positives found")
+
+true_negatives_mask = (preds == 0) & (labels == 0)
+true_negative_images = images[true_negatives_mask]
+true_negative_probs = probs[true_negatives_mask]
+
+if len(true_negative_images) > 0:
+    num_to_show = min(12, len(true_negative_images))
+    plt.figure(figsize=(16, 4))
+    for i in range(num_to_show):
+        plt.subplot(3, 4, i + 1)
+        img = true_negative_images[i].transpose(1, 2, 0)
+        img = np.clip(img, 0, 1)
+        plt.imshow(img)
+        plt.title(f"TN: Prob={true_negative_probs[i]:.3f}")
+        plt.axis('off')
+
+    plt.suptitle(f'True Negatives (N={len(true_negative_images)}): Correctly Predicted Class 0',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('true_negatives.png', dpi=150, bbox_inches='tight')
+    print(f"✓ True negatives saved as 'true_negatives.png' ({len(true_negative_images)} total)")
+    plt.show()
+else:
+    print("✗ No true negatives found")
 # =====================
 # SAVE RESULTS SUMMARY
 # =====================
 with open('evaluation_results.txt', 'w') as f:
     f.write("="*60 + "\n")
-    f.write("MODEL EVALUATION RESULTS - EPOCH 5\n")
+    f.write("MODEL EVALUATION RESULTS\n")
     f.write("="*60 + "\n\n")
 
     f.write(f"Model Path: {MODEL_PATH}\n")
@@ -341,11 +412,13 @@ with open('evaluation_results.txt', 'w') as f:
 
     f.write("PERFORMANCE METRICS:\n")
     f.write("-"*60 + "\n")
-    f.write(f"Accuracy:        {accuracy:.4f}\n")
-    f.write(f"ROC AUC Score:   {roc_auc:.4f}\n")
-    f.write(f"Sensitivity:     {sensitivity:.4f}\n")
-    f.write(f"Specificity:     {specificity:.4f}\n")
-    f.write(f"Precision:       {precision:.4f}\n\n")
+    f.write(f"Overall Accuracy:    {overall_accuracy:.4f}\n")
+    f.write(f"F1-Score:            {f1:.4f}\n")
+    f.write(f"Average Precision:   {avg_precision:.4f}\n")
+    f.write(f"ROC AUC Score:       {roc_auc:.4f}\n")
+    f.write(f"Sensitivity:         {sensitivity:.4f}\n")
+    f.write(f"Specificity:         {specificity:.4f}\n")
+    f.write(f"Precision:           {precision:.4f}\n\n")
 
     f.write("CONFUSION MATRIX:\n")
     f.write("-"*60 + "\n")
